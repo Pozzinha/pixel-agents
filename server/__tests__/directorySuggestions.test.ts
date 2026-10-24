@@ -1,7 +1,17 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Mock os.homedir() so the shared config file lands in an isolated temp dir on
+// every platform. Overriding process.env.HOME is not portable: os.homedir()
+// reads USERPROFILE on Windows, so a HOME-only override would still hit the
+// real ~/.pixel-agents.
+let tempHome: string;
+vi.mock('os', async () => {
+  const actual = await vi.importActual<typeof import('os')>('os');
+  return { ...actual, homedir: () => tempHome };
+});
 
 import { DIRECTORY_SUGGESTION_HEAD_BYTES, DIRECTORY_SUGGESTION_LIMIT } from '../src/constants.js';
 import { saveUserDirectory } from '../src/directories.js';
@@ -14,13 +24,11 @@ import {
  * Recovering "places you've already worked" out of the coding agent's session
  * transcripts, so the Directory modal can offer them as taps.
  *
- * Everything runs against real files with $HOME redirected to a temp dir, the
- * same isolation directories.test.ts uses — the point of this seam is what it
- * reads off a disk that looks like a used machine.
+ * Everything runs against real files with os.homedir() redirected to a temp
+ * dir, the same isolation directories.test.ts uses — the point of this seam is
+ * what it reads off a disk that looks like a used machine.
  */
 describe('directorySuggestions', () => {
-  let tempHome: string;
-  let originalHome: string | undefined;
   /** Stands in for ~/.claude/projects: one subdirectory per session location. */
   let sessionRoot: string;
 
@@ -31,18 +39,11 @@ describe('directorySuggestions', () => {
 
   beforeEach(() => {
     tempHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-suggest-test-')));
-    originalHome = process.env.HOME;
-    process.env.HOME = tempHome;
     sessionRoot = path.join(tempHome, 'sessions');
     fs.mkdirSync(sessionRoot);
   });
 
   afterEach(() => {
-    if (originalHome === undefined) {
-      delete process.env.HOME;
-    } else {
-      process.env.HOME = originalHome;
-    }
     fs.rmSync(tempHome, { recursive: true, force: true });
   });
 

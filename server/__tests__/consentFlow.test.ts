@@ -1,7 +1,17 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Mock os.homedir() so the shared config file lands in an isolated temp dir on
+// every platform. Overriding process.env.HOME is not portable: os.homedir()
+// reads USERPROFILE on Windows, so a HOME-only override would still hit the
+// real ~/.pixel-agents.
+let tempHome: string;
+vi.mock('os', async () => {
+  const actual = await vi.importActual<typeof import('os')>('os');
+  return { ...actual, homedir: () => tempHome };
+});
 
 import { AgentStateStore } from '../src/agentStateStore.js';
 import { type ClientMessageContext, handleClientMessage } from '../src/clientMessageHandler.js';
@@ -31,8 +41,6 @@ function settle(): Promise<void> {
  * never read as one. Everything is per-provider — ask and answer name 'claude', records live in config.json's maps.
  */
 describe('clientMessageHandler: hooks consent flow', () => {
-  let tempHome: string;
-  let originalHome: string | undefined;
   let store: AgentStateStore;
   let sent: Array<Record<string, unknown>>;
   let ctx: ClientMessageContext;
@@ -75,8 +83,6 @@ describe('clientMessageHandler: hooks consent flow', () => {
 
   beforeEach(() => {
     tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-consent-flow-'));
-    originalHome = process.env.HOME;
-    process.env.HOME = tempHome;
 
     store = new AgentStateStore();
     store.setAdapter(new FileStateAdapter({ namespace: 'standalone' }));
@@ -85,11 +91,6 @@ describe('clientMessageHandler: hooks consent flow', () => {
   });
 
   afterEach(() => {
-    if (originalHome === undefined) {
-      delete process.env.HOME;
-    } else {
-      process.env.HOME = originalHome;
-    }
     store.dispose();
     fs.rmSync(tempHome, { recursive: true, force: true });
   });

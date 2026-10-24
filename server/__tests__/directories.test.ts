@@ -1,7 +1,17 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Mock os.homedir() so the shared config file lands in an isolated temp dir on
+// every platform. Overriding process.env.HOME is not portable: os.homedir()
+// reads USERPROFILE on Windows, so a HOME-only override would still hit the
+// real ~/.pixel-agents.
+let tempHome: string;
+vi.mock('os', async () => {
+  const actual = await vi.importActual<typeof import('os')>('os');
+  return { ...actual, homedir: () => tempHome };
+});
 
 import { readConfig } from '../src/configPersistence.js';
 import {
@@ -17,20 +27,16 @@ import {
 
 /**
  * The shared Directory module both hosts drive. Everything here goes through the
- * real shared config file, with $HOME redirected to a fresh temp dir per test —
- * the same isolation the other config-touching suites use.
+ * real shared config file, with os.homedir() redirected to a fresh temp dir per
+ * test — the same isolation the other config-touching suites use.
  */
 describe('directories', () => {
-  let tempHome: string;
-  let originalHome: string | undefined;
   /** Real directories on disk to point Directories at. */
   let alpha: string;
   let beta: string;
 
   beforeEach(() => {
     tempHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-dirs-test-')));
-    originalHome = process.env.HOME;
-    process.env.HOME = tempHome;
     alpha = path.join(tempHome, 'alpha');
     beta = path.join(tempHome, 'beta');
     fs.mkdirSync(alpha);
@@ -38,11 +44,6 @@ describe('directories', () => {
   });
 
   afterEach(() => {
-    if (originalHome === undefined) {
-      delete process.env.HOME;
-    } else {
-      process.env.HOME = originalHome;
-    }
     fs.rmSync(tempHome, { recursive: true, force: true });
   });
 

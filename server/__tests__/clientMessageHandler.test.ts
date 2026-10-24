@@ -1,7 +1,17 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Mock os.homedir() so the shared config file lands in an isolated temp dir on
+// every platform. Overriding process.env.HOME is not portable: os.homedir()
+// reads USERPROFILE on Windows, so a HOME-only override would still hit the
+// real ~/.pixel-agents.
+let tempHome: string;
+vi.mock('os', async () => {
+  const actual = await vi.importActual<typeof import('os')>('os');
+  return { ...actual, homedir: () => tempHome };
+});
 
 import { AgentRuntime } from '../src/agentRuntime.js';
 import { AgentStateStore } from '../src/agentStateStore.js';
@@ -57,12 +67,10 @@ function createTestAgent(overrides: Partial<AgentState> = {}): AgentState {
 /**
  * These tests exercise the area-related dispatch branches and the load-order
  * invariant in handleWebviewReady. They isolate the on-disk config + state
- * files by redirecting $HOME to a fresh temp dir for every test, so the
+ * files by redirecting os.homedir() to a fresh temp dir for every test, so the
  * standalone adapter writes its config.json there.
  */
 describe('clientMessageHandler: areas + carpet wire ordering', () => {
-  let tempHome: string;
-  let originalHome: string | undefined;
   let store: AgentStateStore;
   let sent: Array<Record<string, unknown>>;
   let ctx: ClientMessageContext;
@@ -75,8 +83,6 @@ describe('clientMessageHandler: areas + carpet wire ordering', () => {
 
   beforeEach(() => {
     tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-cmh-test-'));
-    originalHome = process.env.HOME;
-    process.env.HOME = tempHome;
 
     store = new AgentStateStore();
     store.setAdapter(new FileStateAdapter({ namespace: 'standalone' }));
@@ -85,11 +91,6 @@ describe('clientMessageHandler: areas + carpet wire ordering', () => {
   });
 
   afterEach(() => {
-    if (originalHome === undefined) {
-      delete process.env.HOME;
-    } else {
-      process.env.HOME = originalHome;
-    }
     store.dispose();
     fs.rmSync(tempHome, { recursive: true, force: true });
   });
@@ -430,8 +431,6 @@ describe('clientMessageHandler: areas + carpet wire ordering', () => {
 });
 
 describe('clientMessageHandler: saveAgentSeats palette sync', () => {
-  let tempHome: string;
-  let originalHome: string | undefined;
   let store: AgentStateStore;
   let sent: Array<Record<string, unknown>>;
   let ctx: ClientMessageContext;
@@ -444,8 +443,6 @@ describe('clientMessageHandler: saveAgentSeats palette sync', () => {
 
   beforeEach(() => {
     tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-cmh-seats-'));
-    originalHome = process.env.HOME;
-    process.env.HOME = tempHome;
 
     store = new AgentStateStore();
     store.setAdapter(new FileStateAdapter({ namespace: 'standalone' }));
@@ -454,11 +451,6 @@ describe('clientMessageHandler: saveAgentSeats palette sync', () => {
   });
 
   afterEach(() => {
-    if (originalHome === undefined) {
-      delete process.env.HOME;
-    } else {
-      process.env.HOME = originalHome;
-    }
     store.dispose();
     fs.rmSync(tempHome, { recursive: true, force: true });
   });
@@ -622,8 +614,6 @@ describe('clientMessageHandler: saveAgentSeats palette sync', () => {
  * launch/close routing.
  */
 describe('clientMessageHandler: standalone terminal control plane', () => {
-  let tempHome: string;
-  let originalHome: string | undefined;
   let store: AgentStateStore;
   let runtime: AgentRuntime;
   let sent: Array<Record<string, unknown>>;
@@ -703,8 +693,6 @@ describe('clientMessageHandler: standalone terminal control plane', () => {
 
   beforeEach(() => {
     tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-cmh-term-test-'));
-    originalHome = process.env.HOME;
-    process.env.HOME = tempHome;
 
     store = new AgentStateStore();
     store.setAdapter(new FileStateAdapter({ namespace: 'standalone' }));
@@ -715,11 +703,6 @@ describe('clientMessageHandler: standalone terminal control plane', () => {
   });
 
   afterEach(() => {
-    if (originalHome === undefined) {
-      delete process.env.HOME;
-    } else {
-      process.env.HOME = originalHome;
-    }
     runtime.dispose();
     store.dispose();
     fs.rmSync(tempHome, { recursive: true, force: true });
@@ -1184,26 +1167,21 @@ describe('clientMessageHandler: standalone terminal control plane', () => {
  * disk or in the store moved.
  */
 describe('clientMessageHandler: read-only (untokened) clients', () => {
-  let tempHome: string;
-  let originalHome: string | undefined;
   let store: AgentStateStore;
   let sent: Array<Record<string, unknown>>;
 
   beforeEach(() => {
     tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-cmh-readonly-'));
-    originalHome = process.env.HOME;
-    process.env.HOME = tempHome;
     store = new AgentStateStore();
     store.setAdapter(new FileStateAdapter({ namespace: 'standalone' }));
     sent = [];
   });
 
   afterEach(() => {
-    process.env.HOME = originalHome;
     fs.rmSync(tempHome, { recursive: true, force: true });
   });
 
-  /** Everything under the temp HOME, as path -> contents. */
+  /** Everything under the temp home dir, as path -> contents. */
   function snapshotHome(): Record<string, string> {
     const out: Record<string, string> = {};
     const walk = (dir: string): void => {
